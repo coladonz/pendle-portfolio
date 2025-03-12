@@ -46,13 +46,23 @@ contract TanguPendle is Ownable {
         address lpToken
     );
     /// @dev Deposit event is emitted when a user deposits assets into the contract
-    event Deposit(address user, address market, TokenType tokenType, uint amount);
+    event Deposit(
+        address indexed user,
+        address indexed market,
+        TokenType tokenType,
+        uint amount
+    );
     /// @dev Withdraw event is emitted when a user withdraws assets from the contract
-    event Withdraw(address user, address market, TokenType tokenType, uint amount);
+    event Withdraw(
+        address indexed user,
+        address indexed market,
+        TokenType tokenType,
+        uint amount
+    );
     /// @dev Swap event is emitted when a user swaps assets
     event Swap(
-        address user,
-        address market,
+        address indexed user,
+        address indexed market,
         TokenType fromTokenType,
         TokenType toTokenType,
         uint amountIn,
@@ -83,6 +93,15 @@ contract TanguPendle is Ownable {
         address ytToken,
         address lpToken
     ) external onlyOwner {
+        if (
+            market == address(0) ||
+            uToken == address(0) ||
+            syToken == address(0) ||
+            ptToken == address(0) ||
+            ytToken == address(0) ||
+            lpToken == address(0)
+        ) revert InvalidMarket();
+
         marketInfos[market] = MarketInfo(uToken, syToken, ptToken, ytToken, lpToken);
         emit AddMarket(market, uToken, syToken, ptToken, ytToken, lpToken);
     }
@@ -168,6 +187,10 @@ contract TanguPendle is Ownable {
         emit Swap(msg.sender, market, fromTokenType, toTokenType, amount, netOut);
     }
 
+    function getMarketInfo(address market) external view returns (MarketInfo memory) {
+        return marketInfos[market];
+    }
+
     /// @dev _getToken is used to get the token address for a given market and token type
     /// @param market The market to get the token address from
     /// @param tokenType The type of token to get the address for
@@ -220,218 +243,86 @@ contract TanguPendle is Ownable {
     ) internal returns (uint netOut) {
         if (fromTokenType == toTokenType) revert InvalidSwap(fromTokenType, toTokenType);
 
+        // Convert fromToken to syToken
+        uint syOut;
+        address syToken = _getToken(market, TokenType.SY);
         address fromToken = _getToken(market, fromTokenType);
         address toToken = _getToken(market, toTokenType);
         IERC20(fromToken).forceApprove(address(pendleRouter), fromBalance);
-
         if (fromTokenType == TokenType.ERC20) {
-            if (toTokenType == TokenType.SY) {
-                netOut = pendleRouter.mintSyFromToken(
-                    to,
-                    toToken,
-                    0,
-                    createTokenInputSimple(fromToken, fromBalance)
-                );
-            } else if (toTokenType == TokenType.PT) {
-                (netOut, , ) = pendleRouter.swapExactTokenForPt(
-                    to,
-                    market,
-                    0,
-                    createDefaultApproxParams(),
-                    createTokenInputSimple(fromToken, fromBalance),
-                    createEmptyLimitOrderData()
-                );
-            } else if (toTokenType == TokenType.YT) {
-                (netOut, , ) = pendleRouter.swapExactTokenForYt(
-                    to,
-                    market,
-                    0,
-                    createDefaultApproxParams(),
-                    createTokenInputSimple(fromToken, fromBalance),
-                    createEmptyLimitOrderData()
-                );
-            } else if (toTokenType == TokenType.LP) {
-                (netOut, , ) = pendleRouter.addLiquiditySingleToken(
-                    to,
-                    market,
-                    0,
-                    createDefaultApproxParams(),
-                    createTokenInputSimple(fromToken, fromBalance),
-                    createEmptyLimitOrderData()
-                );
-            }
-        } else if (fromTokenType == TokenType.SY) {
-            if (toTokenType == TokenType.PT) {
-                (netOut, ) = pendleRouter.swapExactSyForPt(
-                    to,
-                    market,
-                    fromBalance,
-                    0,
-                    createDefaultApproxParams(),
-                    createEmptyLimitOrderData()
-                );
-            } else if (toTokenType == TokenType.ERC20) {
-                netOut = pendleRouter.redeemSyToToken(
-                    to,
-                    fromToken,
-                    fromBalance,
-                    createTokenOutputSimple(toToken, 0)
-                );
-            } else if (toTokenType == TokenType.YT) {
-                (netOut, ) = pendleRouter.swapExactSyForYt(
-                    to,
-                    market,
-                    fromBalance,
-                    0,
-                    createDefaultApproxParams(),
-                    createEmptyLimitOrderData()
-                );
-            } else if (toTokenType == TokenType.LP) {
-                (netOut, ) = pendleRouter.addLiquiditySingleSy(
-                    to,
-                    market,
-                    fromBalance,
-                    0,
-                    createDefaultApproxParams(),
-                    createEmptyLimitOrderData()
-                );
-            }
+            syOut = pendleRouter.mintSyFromToken(
+                address(this),
+                syToken,
+                0,
+                createTokenInputSimple(fromToken, fromBalance)
+            );
         } else if (fromTokenType == TokenType.PT) {
-            if (toTokenType == TokenType.ERC20) {
-                (netOut, , ) = pendleRouter.swapExactPtForToken(
-                    to,
-                    market,
-                    fromBalance,
-                    createTokenOutputSimple(toToken, 0),
-                    createEmptyLimitOrderData()
-                );
-            } else if (toTokenType == TokenType.SY) {
-                (netOut, ) = pendleRouter.swapExactPtForSy(
-                    to,
-                    market,
-                    fromBalance,
-                    0,
-                    createEmptyLimitOrderData()
-                );
-            } else if (toTokenType == TokenType.YT) {
-                (uint syOut, ) = pendleRouter.swapExactPtForSy(
-                    to,
-                    market,
-                    fromBalance,
-                    0,
-                    createEmptyLimitOrderData()
-                );
-                (netOut, ) = pendleRouter.swapExactSyForYt(
-                    to,
-                    market,
-                    syOut,
-                    0,
-                    createDefaultApproxParams(),
-                    createEmptyLimitOrderData()
-                );
-            } else if (toTokenType == TokenType.LP) {
-                (netOut, ) = pendleRouter.addLiquiditySinglePt(
-                    to,
-                    market,
-                    fromBalance,
-                    0,
-                    createDefaultApproxParams(),
-                    createEmptyLimitOrderData()
-                );
-            }
+            (syOut, ) = pendleRouter.swapExactPtForSy(
+                address(this),
+                market,
+                fromBalance,
+                0,
+                createEmptyLimitOrderData()
+            );
         } else if (fromTokenType == TokenType.YT) {
-            if (toTokenType == TokenType.ERC20) {
-                pendleRouter.swapExactYtForToken(
-                    to,
-                    market,
-                    fromBalance,
-                    createTokenOutputSimple(toToken, 0),
-                    createEmptyLimitOrderData()
-                );
-            } else if (toTokenType == TokenType.SY) {
-                (netOut, ) = pendleRouter.swapExactYtForSy(
-                    to,
-                    market,
-                    fromBalance,
-                    0,
-                    createEmptyLimitOrderData()
-                );
-            } else if (toTokenType == TokenType.PT) {
-                (uint syOut, ) = pendleRouter.swapExactYtForSy(
-                    to,
-                    market,
-                    fromBalance,
-                    0,
-                    createEmptyLimitOrderData()
-                );
-                (netOut, ) = pendleRouter.swapExactSyForPt(
-                    to,
-                    market,
-                    syOut,
-                    0,
-                    createDefaultApproxParams(),
-                    createEmptyLimitOrderData()
-                );
-            } else if (toTokenType == TokenType.LP) {
-                (uint syOut, ) = pendleRouter.swapExactYtForSy(
-                    to,
-                    market,
-                    fromBalance,
-                    0,
-                    createEmptyLimitOrderData()
-                );
-                (netOut, ) = pendleRouter.addLiquiditySingleSy(
-                    to,
-                    market,
-                    syOut,
-                    0,
-                    createDefaultApproxParams(),
-                    createEmptyLimitOrderData()
-                );
-            }
+            (syOut, ) = pendleRouter.swapExactYtForSy(
+                address(this),
+                market,
+                fromBalance,
+                0,
+                createEmptyLimitOrderData()
+            );
         } else if (fromTokenType == TokenType.LP) {
-            if (toTokenType == TokenType.ERC20) {
-                pendleRouter.removeLiquiditySingleToken(
-                    to,
-                    market,
-                    fromBalance,
-                    createTokenOutputSimple(toToken, 0),
-                    createEmptyLimitOrderData()
-                );
-            } else if (toTokenType == TokenType.SY) {
-                (netOut, ) = pendleRouter.removeLiquiditySingleSy(
-                    to,
-                    market,
-                    fromBalance,
-                    0,
-                    createEmptyLimitOrderData()
-                );
-            } else if (toTokenType == TokenType.PT) {
-                (netOut, ) = pendleRouter.removeLiquiditySinglePt(
-                    to,
-                    market,
-                    fromBalance,
-                    0,
-                    createDefaultApproxParams(),
-                    createEmptyLimitOrderData()
-                );
-            } else if (toTokenType == TokenType.YT) {
-                (uint syOut, ) = pendleRouter.removeLiquiditySingleSy(
-                    to,
-                    market,
-                    fromBalance,
-                    0,
-                    createEmptyLimitOrderData()
-                );
-                (netOut, ) = pendleRouter.swapExactSyForYt(
-                    to,
-                    market,
-                    syOut,
-                    0,
-                    createDefaultApproxParams(),
-                    createEmptyLimitOrderData()
-                );
-            }
+            (syOut, ) = pendleRouter.removeLiquiditySingleSy(
+                address(this),
+                market,
+                fromBalance,
+                0,
+                createEmptyLimitOrderData()
+            );
+        } else if (fromTokenType == TokenType.SY) {
+            syOut = fromBalance;
+        }
+
+        // Convert syToken to toToken
+        IERC20(syToken).forceApprove(address(pendleRouter), syOut);
+        if (toTokenType == TokenType.ERC20) {
+            netOut = pendleRouter.redeemSyToToken(
+                to,
+                syToken,
+                syOut,
+                createTokenOutputSimple(toToken, 0)
+            );
+        } else if (toTokenType == TokenType.PT) {
+            (netOut, ) = pendleRouter.swapExactSyForPt(
+                to,
+                market,
+                syOut,
+                0,
+                createDefaultApproxParams(),
+                createEmptyLimitOrderData()
+            );
+        } else if (toTokenType == TokenType.YT) {
+            (netOut, ) = pendleRouter.swapExactSyForYt(
+                to,
+                market,
+                syOut,
+                0,
+                createDefaultApproxParams(),
+                createEmptyLimitOrderData()
+            );
+        } else if (toTokenType == TokenType.LP) {
+            (netOut, ) = pendleRouter.addLiquiditySingleSy(
+                to,
+                market,
+                syOut,
+                0,
+                createDefaultApproxParams(),
+                createEmptyLimitOrderData()
+            );
+        } else if (toTokenType == TokenType.SY) {
+            netOut = syOut;
+            IERC20(syToken).safeTransfer(to, syOut);
         }
     }
 }
