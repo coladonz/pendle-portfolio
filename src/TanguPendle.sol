@@ -38,12 +38,11 @@ contract TanguPendle is Ownable {
 
     /// @dev AddMarket event is emitted when a new market is added
     event AddMarket(
-        address market,
+        address indexed lpToken,
         address uToken,
         address syToken,
         address ptToken,
-        address ytToken,
-        address lpToken
+        address ytToken
     );
     /// @dev Deposit event is emitted when a user deposits assets into the contract
     event Deposit(
@@ -70,6 +69,7 @@ contract TanguPendle is Ownable {
     );
 
     /// @dev Error codes
+    error InvalidAmount();
     error InvalidToken();
     error InvalidMarket();
     error InvalidTokenType();
@@ -86,7 +86,6 @@ contract TanguPendle is Ownable {
 
     /// @dev SetMarket is used to set the market information
     function setMarket(
-        address market,
         address uToken,
         address syToken,
         address ptToken,
@@ -94,7 +93,6 @@ contract TanguPendle is Ownable {
         address lpToken
     ) external onlyOwner {
         if (
-            market == address(0) ||
             uToken == address(0) ||
             syToken == address(0) ||
             ptToken == address(0) ||
@@ -102,8 +100,8 @@ contract TanguPendle is Ownable {
             lpToken == address(0)
         ) revert InvalidMarket();
 
-        marketInfos[market] = MarketInfo(uToken, syToken, ptToken, ytToken, lpToken);
-        emit AddMarket(market, uToken, syToken, ptToken, ytToken, lpToken);
+        marketInfos[lpToken] = MarketInfo(uToken, syToken, ptToken, ytToken, lpToken);
+        emit AddMarket(lpToken, uToken, syToken, ptToken, ytToken);
     }
 
     /// @notice Deposit is used to deposit assets into the contract
@@ -115,9 +113,11 @@ contract TanguPendle is Ownable {
         TokenType tokenType,
         uint amount
     ) external onlyValidMarket(market) {
+        if (amount == 0) revert InvalidAmount();
+
         address token = _getToken(market, tokenType);
         IERC20(token).safeTransferFrom(msg.sender, address(this), amount);
-        balanceOf[msg.sender][_getKey(msg.sender, market, tokenType)] += amount;
+        balanceOf[msg.sender][_getKey(market, tokenType)] += amount;
         emit Deposit(msg.sender, market, tokenType, amount);
     }
 
@@ -130,7 +130,7 @@ contract TanguPendle is Ownable {
         TokenType tokenType,
         uint amount
     ) external onlyValidMarket(market) {
-        bytes32 key = _getKey(msg.sender, market, tokenType);
+        bytes32 key = _getKey(market, tokenType);
         uint balance = balanceOf[msg.sender][key];
 
         if (balance < amount) revert InsufficientBalance();
@@ -151,8 +151,8 @@ contract TanguPendle is Ownable {
         TokenType fromTokenType,
         TokenType toTokenType
     ) external onlyValidMarket(market) {
-        bytes32 fromKey = _getKey(msg.sender, market, fromTokenType);
-        bytes32 toKey = _getKey(msg.sender, market, toTokenType);
+        bytes32 fromKey = _getKey(market, fromTokenType);
+        bytes32 toKey = _getKey(market, toTokenType);
         uint fromBalance = balanceOf[msg.sender][fromKey];
 
         if (fromBalance == 0) revert InsufficientBalance();
@@ -181,14 +181,41 @@ contract TanguPendle is Ownable {
         TokenType toTokenType,
         uint amount
     ) external onlyValidMarket(market) returns (uint netOut) {
+        if (amount == 0) revert InvalidAmount();
+
         address fromToken = _getToken(market, fromTokenType);
         IERC20(fromToken).safeTransferFrom(msg.sender, address(this), amount);
         netOut = _exchangeAssets(market, fromTokenType, toTokenType, amount, msg.sender);
         emit Swap(msg.sender, market, fromTokenType, toTokenType, amount, netOut);
     }
 
+    /// @notice getToken is used to get the token address for a given market and token type
+    /// @param market The market to get the token address from
+    /// @param tokenType The type of token to get the address for
+    /// @return The address of the token
+    function getToken(
+        address market,
+        TokenType tokenType
+    ) external view returns (address) {
+        return _getToken(market, tokenType);
+    }
+
+    /// @notice getMarketInfo is used to get the market information for a given market
+    /// @param market The market to get the information for
+    /// @return The market information
     function getMarketInfo(address market) external view returns (MarketInfo memory) {
         return marketInfos[market];
+    }
+
+    /// @notice getMarketKey is used to get the unique key for a given market and token type
+    /// @param market The market to get the key for
+    /// @param tokenType The type of token to get the key for
+    /// @return The unique key for the given market and token type
+    function getMarketKey(
+        address market,
+        TokenType tokenType
+    ) external pure returns (bytes32) {
+        return _getKey(market, tokenType);
     }
 
     /// @dev _getToken is used to get the token address for a given market and token type
@@ -214,17 +241,15 @@ contract TanguPendle is Ownable {
         revert InvalidTokenType();
     }
 
-    /// @dev _getKey is used to generate a unique key for a given user, market, and token type
-    /// @param user The user to generate the key for
+    /// @dev _getKey is used to generate a unique key for a given market and token type
     /// @param market The market to generate the key for
     /// @param tokenType The type of token to generate the key for
-    /// @return The unique key for the given user, market, and token type
+    /// @return The unique key for the given market and token type
     function _getKey(
-        address user,
         address market,
         TokenType tokenType
     ) internal pure returns (bytes32) {
-        return keccak256(abi.encode(user, market, tokenType));
+        return keccak256(abi.encode(market, tokenType));
     }
 
     /// @dev _exchangeAssets is used to exchange assets between different types
@@ -244,20 +269,21 @@ contract TanguPendle is Ownable {
         if (fromTokenType == toTokenType) revert InvalidSwap(fromTokenType, toTokenType);
 
         // Convert fromToken to syToken
-        uint syOut;
         address syToken = _getToken(market, TokenType.SY);
         address fromToken = _getToken(market, fromTokenType);
         address toToken = _getToken(market, toTokenType);
+        uint syOut;
+        uint beforeSyBal = IERC20(syToken).balanceOf(address(this));
         IERC20(fromToken).forceApprove(address(pendleRouter), fromBalance);
         if (fromTokenType == TokenType.ERC20) {
-            syOut = pendleRouter.mintSyFromToken(
+            pendleRouter.mintSyFromToken(
                 address(this),
                 syToken,
                 0,
                 createTokenInputSimple(fromToken, fromBalance)
             );
         } else if (fromTokenType == TokenType.PT) {
-            (syOut, ) = pendleRouter.swapExactPtForSy(
+            pendleRouter.swapExactPtForSy(
                 address(this),
                 market,
                 fromBalance,
@@ -265,7 +291,7 @@ contract TanguPendle is Ownable {
                 createEmptyLimitOrderData()
             );
         } else if (fromTokenType == TokenType.YT) {
-            (syOut, ) = pendleRouter.swapExactYtForSy(
+            pendleRouter.swapExactYtForSy(
                 address(this),
                 market,
                 fromBalance,
@@ -273,29 +299,33 @@ contract TanguPendle is Ownable {
                 createEmptyLimitOrderData()
             );
         } else if (fromTokenType == TokenType.LP) {
-            (syOut, ) = pendleRouter.removeLiquiditySingleSy(
+            pendleRouter.removeLiquiditySingleSy(
                 address(this),
                 market,
                 fromBalance,
                 0,
                 createEmptyLimitOrderData()
             );
-        } else if (fromTokenType == TokenType.SY) {
+        }
+        uint afterSyBal = IERC20(syToken).balanceOf(address(this));
+        syOut = afterSyBal - beforeSyBal;
+        if (fromTokenType == TokenType.SY) {
             syOut = fromBalance;
         }
 
         // Convert syToken to toToken
+        uint beforeToBal = IERC20(toToken).balanceOf(address(this));
         IERC20(syToken).forceApprove(address(pendleRouter), syOut);
         if (toTokenType == TokenType.ERC20) {
-            netOut = pendleRouter.redeemSyToToken(
-                to,
+            pendleRouter.redeemSyToToken(
+                address(this),
                 syToken,
                 syOut,
                 createTokenOutputSimple(toToken, 0)
             );
         } else if (toTokenType == TokenType.PT) {
-            (netOut, ) = pendleRouter.swapExactSyForPt(
-                to,
+            pendleRouter.swapExactSyForPt(
+                address(this),
                 market,
                 syOut,
                 0,
@@ -303,8 +333,8 @@ contract TanguPendle is Ownable {
                 createEmptyLimitOrderData()
             );
         } else if (toTokenType == TokenType.YT) {
-            (netOut, ) = pendleRouter.swapExactSyForYt(
-                to,
+            pendleRouter.swapExactSyForYt(
+                address(this),
                 market,
                 syOut,
                 0,
@@ -312,17 +342,23 @@ contract TanguPendle is Ownable {
                 createEmptyLimitOrderData()
             );
         } else if (toTokenType == TokenType.LP) {
-            (netOut, ) = pendleRouter.addLiquiditySingleSy(
-                to,
+            pendleRouter.addLiquiditySingleSy(
+                address(this),
                 market,
                 syOut,
                 0,
                 createDefaultApproxParams(),
                 createEmptyLimitOrderData()
             );
-        } else if (toTokenType == TokenType.SY) {
+        }
+        uint afterToBal = IERC20(toToken).balanceOf(address(this));
+        netOut = afterToBal - beforeToBal;
+        if (toTokenType == TokenType.SY) {
             netOut = syOut;
-            IERC20(syToken).safeTransfer(to, syOut);
+        }
+
+        if (to != address(this)) {
+            IERC20(toToken).safeTransfer(to, netOut);
         }
     }
 }
