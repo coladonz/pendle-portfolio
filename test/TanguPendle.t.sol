@@ -27,13 +27,7 @@ contract TanguPendleTest is Test {
         vm.createSelectFork("http://127.0.0.1:8545");
 
         tanguPendle = new TanguPendle();
-        tanguPendle.setMarket(
-            address(uToken),
-            address(syToken),
-            address(ptToken),
-            address(ytToken),
-            address(lpToken)
-        );
+        tanguPendle.supportMarket(address(lpToken), true);
 
         uKey = tanguPendle.getMarketKey(address(lpToken), TanguPendle.TokenType.ERC20);
         syKey = tanguPendle.getMarketKey(address(lpToken), TanguPendle.TokenType.SY);
@@ -46,29 +40,19 @@ contract TanguPendleTest is Test {
 
     function test_0_setMarket() public {
         vm.expectRevert(TanguPendle.InvalidMarket.selector);
-        tanguPendle.setMarket(address(0), address(0), address(0), address(0), address(0));
+        tanguPendle.supportMarket(address(0), true);
 
         vm.prank(user);
         vm.expectRevert(
             abi.encodeWithSelector(Ownable.OwnableUnauthorizedAccount.selector, user)
         );
-        tanguPendle.setMarket(address(1), address(2), address(3), address(4), address(5));
+        tanguPendle.supportMarket(address(lpToken), true);
 
         vm.expectEmit(true, true, false, false);
-        emit TanguPendle.AddMarket(
-            address(5),
-            address(1),
-            address(2),
-            address(3),
-            address(4)
-        );
-        tanguPendle.setMarket(address(1), address(2), address(3), address(4), address(5));
+        emit TanguPendle.AddMarket(address(lpToken));
+        tanguPendle.supportMarket(address(lpToken), true);
 
-        assertEq(tanguPendle.getMarketInfo(address(5)).uToken, address(1));
-        assertEq(tanguPendle.getMarketInfo(address(5)).syToken, address(2));
-        assertEq(tanguPendle.getMarketInfo(address(5)).ptToken, address(3));
-        assertEq(tanguPendle.getMarketInfo(address(5)).ytToken, address(4));
-        assertEq(tanguPendle.getMarketInfo(address(5)).lpToken, address(5));
+        assertEq(tanguPendle.marketSupported(address(lpToken)), true);
     }
 
     function test_1_deposit() public {
